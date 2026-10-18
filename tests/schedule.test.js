@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {parseTime, resolveScheduledState, saturationFromIntensity, scheduleAt, temperatureFromIntensity} from '../schedule.js';
+import {contrastAdjustmentFromIntensity, parseTime, resolveScheduledState, scheduleAt} from '../schedule.js';
 
 test('accepts only valid 24-hour HH:MM values', () => {
     assert.equal(parseTime('20:00'), 1200);
@@ -34,10 +34,8 @@ test('manual schedule choices override the current interval only until its next 
     assert.equal(resolveScheduledState(schedule, true, false, schedule.nextBoundary, schedule.nextBoundary), schedule.active);
 });
 
-test('maps 40 percent to about 4980 K and full monochrome to zero saturation', () => {
-    assert.equal(temperatureFromIntensity(40), 4980);
-    assert.equal(temperatureFromIntensity(0), 6500);
-    assert.equal(temperatureFromIntensity(100), 2700);
-    assert.equal(saturationFromIntensity(0), 100);
-    assert.equal(saturationFromIntensity(100), 0);
+test('maps contrast reduction intensity to Clutter contrast adjustment range', () => {
+    assert.equal(contrastAdjustmentFromIntensity(0), 0);
+    assert.equal(contrastAdjustmentFromIntensity(40), -.4);
+    assert.equal(contrastAdjustmentFromIntensity(100), -1);
 });

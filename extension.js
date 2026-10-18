@@ -9,64 +9,48 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {QuickMenuToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
-import {resolveScheduledState, scheduleAt, saturationFromIntensity, temperatureFromIntensity} from './schedule.js';
+import {contrastAdjustmentFromIntensity, resolveScheduledState, scheduleAt} from './schedule.js';
 
 const NIGHT_LIGHT_SCHEMA = 'org.gnome.settings-daemon.plugins.color';
 class ColorEffects {
     constructor() {
         this._actors = [];
         this._desaturateEffects = [];
+        this._contrastEffects = [];
         this._unredirectDisabled = false;
     }
 
-    apply(mode, intensity) {
-        if (intensity <= 0) {
+    apply(mode, intensity, contrastIntensity = 0) {
+        intensity = Math.clamp(intensity, 0, 100);
+        contrastIntensity = Math.clamp(contrastIntensity, 0, 100);
+        if (intensity === 0 && contrastIntensity === 0) {
             this.clear();
             return;
         }
-        if (this._mode !== mode) {
-            this._removeEffects();
-            this._mode = mode;
-        }
+
         if (!this._unredirectDisabled) {
             global.compositor.disable_unredirect();
             this._unredirectDisabled = true;
         }
 
-        if (mode === 'monochrome') {
-            if (this._desaturateEffects.length === 0) {
-                for (const group of [global.window_group, Main.uiGroup].filter(Boolean)) {
-                    const effect = new Clutter.DesaturateEffect();
-                    group.add_effect_with_name('lumatone-desaturate', effect);
-                    this._desaturateEffects.push({group, effect});
-                }
-            }
-            for (const {effect} of this._desaturateEffects)
-                effect.set_factor(intensity / 100);
+        if (intensity === 0) {
+            this._removeColorEffects();
+            this._mode = null;
         } else {
-            const monitors = Main.layoutManager.monitors;
-            while (this._actors.length > monitors.length)
-                this._actors.pop().destroy();
-            for (let i = 0; i < monitors.length; i++) {
-                const monitor = monitors[i];
-                let actor = this._actors[i];
-                if (!actor) {
-                    actor = new Clutter.Actor({
-                        reactive: false,
-                        can_focus: false,
-                        name: 'lumatone-warm-screen-layer',
-                    });
-                    Main.uiGroup.add_child(actor);
-                    this._actors.push(actor);
-                }
-                actor.set_background_color(new Cogl.Color({
-                    red: 255, green: 167, blue: 78,
-                    alpha: Math.round(255 * 0.48 * intensity / 100),
-                }));
-                actor.set_position(monitor.x, monitor.y);
-                actor.set_size(monitor.width, monitor.height);
+            if (this._mode !== mode) {
+                this._removeColorEffects();
+                this._mode = mode;
             }
+            if (mode === 'monochrome')
+                this._applyMonochrome(intensity);
+            else
+                this._applyWarmth(intensity);
         }
+
+        if (contrastIntensity > 0)
+            this._applyContrast(contrastIntensity);
+        else
+            this._removeContrastEffects();
     }
 
     clear() {
@@ -78,7 +62,57 @@ class ColorEffects {
         }
     }
 
-    _removeEffects() {
+    _applyMonochrome(intensity) {
+        if (this._desaturateEffects.length === 0) {
+            for (const group of [global.window_group, Main.uiGroup].filter(Boolean)) {
+                const effect = new Clutter.DesaturateEffect();
+                group.add_effect_with_name('lumatone-desaturate', effect);
+                this._desaturateEffects.push({group, effect});
+            }
+        }
+        for (const {effect} of this._desaturateEffects)
+            effect.set_factor(intensity / 100);
+    }
+
+    _applyWarmth(intensity) {
+        const monitors = Main.layoutManager.monitors;
+        while (this._actors.length > monitors.length)
+            this._actors.pop().destroy();
+        for (let i = 0; i < monitors.length; i++) {
+            const monitor = monitors[i];
+            let actor = this._actors[i];
+            if (!actor) {
+                actor = new Clutter.Actor({
+                    reactive: false,
+                    can_focus: false,
+                    name: 'lumatone-warm-screen-layer',
+                });
+                Main.uiGroup.add_child(actor);
+                this._actors.push(actor);
+            }
+            actor.set_background_color(new Cogl.Color({
+                red: 255, green: 167, blue: 78,
+                alpha: Math.round(255 * 0.48 * intensity / 100),
+            }));
+            actor.set_position(monitor.x, monitor.y);
+            actor.set_size(monitor.width, monitor.height);
+        }
+    }
+
+    _applyContrast(intensity) {
+        if (this._contrastEffects.length === 0) {
+            for (const group of [global.window_group, Main.uiGroup].filter(Boolean)) {
+                const effect = new Clutter.BrightnessContrastEffect();
+                group.add_effect_with_name('lumatone-contrast', effect);
+                this._contrastEffects.push({group, effect});
+            }
+        }
+        const contrast = contrastAdjustmentFromIntensity(intensity);
+        for (const {effect} of this._contrastEffects)
+            effect.set_contrast(contrast);
+    }
+
+    _removeColorEffects() {
         for (const {group, effect} of this._desaturateEffects) {
             try {
                 group.remove_effect(effect);
@@ -90,6 +124,22 @@ class ColorEffects {
         for (const actor of this._actors)
             actor.destroy();
         this._actors = [];
+    }
+
+    _removeContrastEffects() {
+        for (const {group, effect} of this._contrastEffects) {
+            try {
+                group.remove_effect(effect);
+            } catch (error) {
+                // The stage can be torn down before an extension's disable hook runs.
+            }
+        }
+        this._contrastEffects = [];
+    }
+
+    _removeEffects() {
+        this._removeColorEffects();
+        this._removeContrastEffects();
     }
 }
 
@@ -113,11 +163,15 @@ class NightToneToggle extends QuickMenuToggle {
 
     _populateMenu() {
         this.menu.setHeader('night-light-symbolic', _('Night mode'));
-        this._content = new St.BoxLayout({vertical: true, style_class: 'quick-settings-grid'});
+        this._content = new St.BoxLayout({
+            vertical: true,
+            style_class: 'quick-settings-grid',
+            style: 'spacing: 12px; padding: 6px 8px;',
+        });
         this._section = new PopupMenu.PopupMenuSection();
         this._section.box.add_child(this._content);
         this.menu.addMenuItem(this._section);
-        const modeRow = new St.BoxLayout({x_expand: true, style_class: 'quick-settings-grid'});
+        const modeRow = new St.BoxLayout({x_expand: true, style_class: 'quick-settings-grid', style: 'spacing: 8px;'});
         this._warm = new St.Button({label: _('Warm'), style_class: 'button', x_expand: true, can_focus: true});
         this._mono = new St.Button({label: _('Black & white'), style_class: 'button', x_expand: true, can_focus: true});
         this._warm.connect('clicked', () => this._extension.setMode('warm'));
@@ -143,17 +197,29 @@ class NightToneToggle extends QuickMenuToggle {
         extremes.add_child(this._left);
         extremes.add_child(this._right);
         this._content.add_child(extremes);
-        const detailsTitle = new St.Label({text: _('Effect details'), style_class: 'dim-label'});
-        this._details = new St.Label({text: _('Temperature ~4980 K'), x_align: Clutter.ActorAlign.START});
         this._content.add_child(new PopupMenu.PopupSeparatorMenuItem());
-        this._content.add_child(detailsTitle);
-        this._content.add_child(this._details);
-        const actions = new St.BoxLayout({x_expand: true});
-        const reset = new St.Button({label: _('Reset effects'), style_class: 'button', x_expand: true, can_focus: true});
-        reset.connect('clicked', () => this._extension.resetEffects());
-        const prefs = new St.Button({label: _('Settings'), style_class: 'button', can_focus: true});
+        const contrastHeading = new St.BoxLayout({x_expand: true});
+        contrastHeading.add_child(new St.Label({text: _('Contrast'), x_expand: true}));
+        this._contrastPercentage = new St.Label({text: '0%'});
+        contrastHeading.add_child(this._contrastPercentage);
+        this._content.add_child(contrastHeading);
+        this._contrastSlider = new Slider(0);
+        this._contrastSlider.accessible_name = _('Contrast reduction');
+        this._content.add_child(this._contrastSlider);
+        this._contrastSlider.connect('notify::value', () => {
+            if (!this._syncing)
+                this._extension.setContrast(Math.round(this._contrastSlider.value * 100));
+        });
+        const contrastExtremes = new St.BoxLayout({x_expand: true});
+        this._contrastLeft = new St.Label({text: _('Normal contrast'), x_expand: true});
+        this._contrastRight = new St.Label({text: _('Lower contrast')});
+        contrastExtremes.add_child(this._contrastLeft);
+        contrastExtremes.add_child(this._contrastRight);
+        this._content.add_child(contrastExtremes);
+        this._content.add_child(new PopupMenu.PopupSeparatorMenuItem());
+        const actions = new St.BoxLayout({x_expand: true, style: 'spacing: 8px;'});
+        const prefs = new St.Button({label: _('Settings'), style_class: 'button', x_expand: true, can_focus: true});
         prefs.connect('clicked', () => this._extension.openPreferences());
-        actions.add_child(reset);
         actions.add_child(prefs);
         this._content.add_child(actions);
     }
@@ -163,10 +229,13 @@ class NightToneToggle extends QuickMenuToggle {
         const mode = settings.get_string('mode');
         const warm = mode === 'warm';
         const value = settings.get_int(warm ? 'warm-intensity' : 'monochrome-intensity');
+        const contrast = settings.get_int('contrast-intensity');
         this._syncing = true;
         this._slider.value = value / 100;
+        this._contrastSlider.value = contrast / 100;
         this._syncing = false;
         this._percentage.text = `${value}%`;
+        this._contrastPercentage.text = `${contrast}%`;
         if (warm) {
             this._warm.add_style_class_name('active');
             this._mono.remove_style_class_name('active');
@@ -176,9 +245,6 @@ class NightToneToggle extends QuickMenuToggle {
         }
         this._left.text = warm ? _('No warming') : _('Normal colors');
         this._right.text = warm ? _('Maximum warmth') : _('Full black & white');
-        this._details.text = warm
-            ? _('Temperature ~%d K').format(temperatureFromIntensity(value))
-            : _('Saturation %d%%').format(saturationFromIntensity(value));
         this._subtitle = this._extension.effectiveEnabled ? _(warm ? 'Warm colors' : 'Black & white') : _('Off');
     }
 });
@@ -210,6 +276,7 @@ export default class LumaToneExtension extends Extension {
             this.settings.connectObject('changed::mode', () => this._apply(), this);
             this.settings.connectObject('changed::warm-intensity', () => this._apply(), this);
             this.settings.connectObject('changed::monochrome-intensity', () => this._apply(), this);
+            this.settings.connectObject('changed::contrast-intensity', () => this._apply(), this);
             this.settings.connectObject('changed::enabled', () => this._apply(), this);
             this.settings.connectObject('changed::schedule-enabled', () => this._updateSchedule(), this);
             this.settings.connectObject('changed::schedule-start', () => this._updateSchedule(), this);
@@ -328,8 +395,9 @@ export default class LumaToneExtension extends Extension {
         this._indicator?.toggle._syncMenu();
     }
 
-    resetEffects() {
-        this.setEnabled(false, true);
+    setContrast(value) {
+        this.settings.set_int('contrast-intensity', Math.clamp(value, 0, 100));
+        this._indicator?.toggle._syncMenu();
     }
 
     _apply() {
@@ -337,7 +405,9 @@ export default class LumaToneExtension extends Extension {
             return;
         const mode = this.settings.get_string('mode');
         const intensity = this.settings.get_int(mode === 'warm' ? 'warm-intensity' : 'monochrome-intensity');
-        this.effects.apply(mode, this.effectiveEnabled ? intensity : 0);
+        const contrast = this.settings.get_int('contrast-intensity');
+        this.effects.apply(mode, this.effectiveEnabled ? intensity : 0,
+            this.effectiveEnabled ? contrast : 0);
     }
 
     _syncMenu(open) {

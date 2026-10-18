@@ -20,12 +20,9 @@ export function scheduleAt(date, start, end) {
     return {valid: true, active, nextBoundary: Math.floor(next.getTime() / 1000)};
 }
 
-export function temperatureFromIntensity(intensity) {
-    return Math.round(6500 - 3800 * Math.max(0, Math.min(100, intensity)) / 100);
-}
-
-export function saturationFromIntensity(intensity) {
-    return 100 - Math.max(0, Math.min(100, intensity));
+export function contrastAdjustmentFromIntensity(intensity) {
+    const reduction = Math.max(0, Math.min(100, intensity));
+    return reduction === 0 ? 0 : -reduction / 100;
 }
 
 export function resolveScheduledState(schedule, overrideActive, overrideEnabled, overrideUntil, nowEpoch) {
