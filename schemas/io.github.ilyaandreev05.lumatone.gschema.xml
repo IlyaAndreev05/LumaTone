@@ -1,0 +1,20 @@
+<schemalist>
+  <schema id="io.github.ilyaandreev05.lumatone" path="/io/github/ilyaandreev05/lumatone/">
+    <key name="enabled" type="b"><default>false</default><summary>Enable the color effect</summary></key>
+    <key name="mode" type="s"><default>'warm'</default><choices><choice value="warm"/><choice value="monochrome"/></choices><summary>Active color mode</summary></key>
+    <key name="warm-intensity" type="i"><default>40</default><range min="0" max="100"/><summary>Warmth intensity</summary></key>
+    <key name="monochrome-intensity" type="i"><default>100</default><range min="0" max="100"/><summary>Monochrome intensity</summary></key>
+    <key name="schedule-enabled" type="b"><default>false</default><summary>Enable a daily schedule</summary></key>
+    <key name="schedule-start" type="s"><default>'20:00'</default><summary>Daily effect start time</summary></key>
+    <key name="schedule-end" type="s"><default>'07:00'</default><summary>Daily effect end time</summary></key>
+    <key name="override-active" type="b"><default>false</default><summary>Temporarily override the schedule</summary></key>
+    <key name="override-enabled" type="b"><default>false</default><summary>Temporary effect state</summary></key>
+    <key name="override-until" type="x"><default>0</default><summary>Time when the schedule override ends</summary></key>
+    <key name="gnome-night-light-enabled" type="b"><default>false</default><summary>Night Light state before LumaTone started</summary></key>
+    <key name="night-light-schedule-automatic" type="b"><default>false</default><summary>Night Light automatic schedule before LumaTone started</summary></key>
+    <key name="night-light-schedule-from" type="d"><default>20.0</default><summary>Night Light start time before LumaTone started</summary></key>
+    <key name="night-light-schedule-to" type="d"><default>6.0</default><summary>Night Light end time before LumaTone started</summary></key>
+    <key name="night-light-temperature" type="u"><default>3596</default><summary>Night Light temperature before LumaTone started</summary></key>
+    <key name="night-light-snapshot-valid" type="b"><default>false</default><summary>A GNOME Night Light snapshot is available</summary></key>
+  </schema>
+</schemalist>
