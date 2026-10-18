@@ -167,8 +167,13 @@ class NightToneToggle extends QuickMenuToggle {
         this._slider.value = value / 100;
         this._syncing = false;
         this._percentage.text = `${value}%`;
-        this._warm.toggle_style_class_name('active', warm);
-        this._mono.toggle_style_class_name('active', !warm);
+        if (warm) {
+            this._warm.add_style_class_name('active');
+            this._mono.remove_style_class_name('active');
+        } else {
+            this._warm.remove_style_class_name('active');
+            this._mono.add_style_class_name('active');
+        }
         this._left.text = warm ? _('No warming') : _('Normal colors');
         this._right.text = warm ? _('Maximum warmth') : _('Full black & white');
         this._details.text = warm
