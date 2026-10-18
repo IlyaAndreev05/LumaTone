@@ -84,7 +84,6 @@ class ColorEffects {
             if (!actor) {
                 actor = new Clutter.Actor({
                     reactive: false,
-                    can_focus: false,
                     name: 'lumatone-warm-screen-layer',
                 });
                 Main.uiGroup.add_child(actor);
