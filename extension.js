@@ -6,7 +6,7 @@ import Clutter from 'gi://Clutter';
 import Cogl from 'gi://Cogl';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {QuickToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
+import {QuickMenuToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
 import {resolveScheduledState, scheduleAt, saturationFromIntensity, temperatureFromIntensity} from './schedule.js';
@@ -94,7 +94,7 @@ class ColorEffects {
 }
 
 const NightToneToggle = GObject.registerClass(
-class NightToneToggle extends QuickToggle {
+class NightToneToggle extends QuickMenuToggle {
     _init(extension) {
         super._init({
             title: _('Night mode'),
@@ -192,50 +192,53 @@ export default class LumaToneExtension extends Extension {
         this.settings = this.getSettings();
         this._nightLight = new Gio.Settings({schema_id: NIGHT_LIGHT_SCHEMA});
         this._nightLightSnapshot = {};
-        this._restoreStaleNightLightSnapshot();
-        this._saveNightLightSnapshot();
-        // Retain GNOME's preference and schedule; keep its effect and controls out of the active session.
-        this._nightLight.set_boolean('night-light-enabled', false);
-        this._nightLight.connectObject('changed::night-light-enabled', () => {
-            if (this._nightLight.get_boolean('night-light-enabled'))
-                this._nightLight.set_boolean('night-light-enabled', false);
-        }, this);
-        for (const key of ['night-light-schedule-automatic', 'night-light-schedule-from',
-            'night-light-schedule-to', 'night-light-temperature']) {
-            this._nightLight.connectObject(`changed::${key}`, () => {
-                const value = this._nightLight.get_value(key);
-                this._nightLightSnapshot[key] = value;
-                this.settings.set_value(key, value);
-            }, this);
-        }
-        this._nativeIndicator = Main.panel.statusArea.quickSettings._nightLight;
-        this._nativeIndicatorVisible = this._nativeIndicator?.visible ?? false;
-        this._nativeItems = [...(this._nativeIndicator?.quickSettingsItems ?? [])].map(item => [item, item.visible]);
-        if (this._nativeIndicator)
-            this._nativeIndicator.visible = false;
-        for (const [item] of this._nativeItems)
-            item.visible = false;
-
         this.effects = new ColorEffects();
-        this._monitorManager = global.backend.get_monitor_manager();
-        this._monitorManager.connectObject('monitors-changed', () => this._apply(), this);
-        this._indicator = new Indicator(this);
-        Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
-        this._updateTimer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 30, () => {
-            this._updateTimer = 0;
+        try {
+            this._restoreStaleNightLightSnapshot();
+
+            // Build and register the new tile before taking over GNOME's controls.
+            this._indicator = new Indicator(this);
+            Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
+            this._monitorManager = global.backend.get_monitor_manager();
+            this._monitorManager.connectObject('monitors-changed', () => this._apply(), this);
+            Main.sessionMode.connectObject('updated', () => this._updateSchedule(), this);
+            this.settings.connectObject('changed::mode', () => this._apply(), this);
+            this.settings.connectObject('changed::warm-intensity', () => this._apply(), this);
+            this.settings.connectObject('changed::monochrome-intensity', () => this._apply(), this);
+            this.settings.connectObject('changed::enabled', () => this._apply(), this);
+            this.settings.connectObject('changed::schedule-enabled', () => this._updateSchedule(), this);
+            this.settings.connectObject('changed::schedule-start', () => this._updateSchedule(), this);
+            this.settings.connectObject('changed::schedule-end', () => this._updateSchedule(), this);
+
+            this._saveNightLightSnapshot();
+            this._nativeIndicator = Main.panel.statusArea.quickSettings._nightLight;
+            this._nativeIndicatorVisible = this._nativeIndicator?.visible ?? false;
+            this._nativeItems = [...(this._nativeIndicator?.quickSettingsItems ?? [])].map(item => [item, item.visible]);
+            for (const key of ['night-light-schedule-automatic', 'night-light-schedule-from',
+                'night-light-schedule-to', 'night-light-temperature']) {
+                this._nightLight.connectObject(`changed::${key}`, () => {
+                    const value = this._nightLight.get_value(key);
+                    this._nightLightSnapshot[key] = value;
+                    this.settings.set_value(key, value);
+                }, this);
+            }
+            this._nightLight.connectObject('changed::night-light-enabled', () => {
+                if (this._nightLight.get_boolean('night-light-enabled'))
+                    this._nightLight.set_boolean('night-light-enabled', false);
+            }, this);
+
+            // Only hide the built-in controls after our tile and its menu are ready.
+            this._nightLight.set_boolean('night-light-enabled', false);
+            if (this._nativeIndicator)
+                this._nativeIndicator.visible = false;
+            for (const [item] of this._nativeItems)
+                item.visible = false;
+
             this._updateSchedule();
-            return GLib.SOURCE_REMOVE;
-        });
-        this._updateSchedule();
-        Main.sessionMode.connectObject('updated', () => this._updateSchedule(), this);
-        this.settings.connectObject('changed::mode', () => this._apply(), this);
-        this.settings.connectObject('changed::warm-intensity', () => this._apply(), this);
-        this.settings.connectObject('changed::monochrome-intensity', () => this._apply(), this);
-        this.settings.connectObject('changed::enabled', () => this._apply(), this);
-        this.settings.connectObject('changed::schedule-enabled', () => this._updateSchedule(), this);
-        this.settings.connectObject('changed::schedule-start', () => this._updateSchedule(), this);
-        this.settings.connectObject('changed::schedule-end', () => this._updateSchedule(), this);
-        this._apply();
+        } catch (error) {
+            this.disable();
+            throw error;
+        }
     }
 
     _restoreStaleNightLightSnapshot() {
