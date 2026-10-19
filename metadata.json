@@ -3,7 +3,7 @@
   "gettext-domain": "lumatone@ilyaandreev05.github.io",
   "name": "LumaTone — Night Display",
   "description": "Warm and monochrome desktop color modes with a daily schedule.",
-  "version": 5,
+  "version": 6,
   "shell-version": ["50"],
   "settings-schema": "io.github.ilyaandreev05.lumatone"
 }

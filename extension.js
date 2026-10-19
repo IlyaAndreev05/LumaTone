@@ -171,10 +171,30 @@ class NightToneToggle extends QuickMenuToggle {
         this._section.box.add_child(this._content);
         this.menu.addMenuItem(this._section);
         const modeRow = new St.BoxLayout({x_expand: true, style_class: 'quick-settings-grid', style: 'spacing: 8px;'});
-        this._warm = new St.Button({label: _('Warm'), style_class: 'button', x_expand: true, can_focus: true});
-        this._mono = new St.Button({label: _('Black & white'), style_class: 'button', x_expand: true, can_focus: true});
-        this._warm.connect('clicked', () => this._extension.setMode('warm'));
-        this._mono.connect('clicked', () => this._extension.setMode('monochrome'));
+        this._warm = new St.Button({
+            label: _('Warm'),
+            style_class: 'button',
+            toggle_mode: true,
+            x_expand: true,
+            can_focus: true,
+            accessible_name: _('Warm color mode'),
+        });
+        this._mono = new St.Button({
+            label: _('Black & white'),
+            style_class: 'button',
+            toggle_mode: true,
+            x_expand: true,
+            can_focus: true,
+            accessible_name: _('Black-and-white color mode'),
+        });
+        this._warm.connect('clicked', () => {
+            this._extension.setMode('warm');
+            this._syncMenu();
+        });
+        this._mono.connect('clicked', () => {
+            this._extension.setMode('monochrome');
+            this._syncMenu();
+        });
         modeRow.add_child(this._warm);
         modeRow.add_child(this._mono);
         this._content.add_child(modeRow);
@@ -235,13 +255,10 @@ class NightToneToggle extends QuickMenuToggle {
         this._syncing = false;
         this._percentage.text = `${value}%`;
         this._contrastPercentage.text = `${contrast}%`;
-        if (warm) {
-            this._warm.add_style_class_name('active');
-            this._mono.remove_style_class_name('active');
-        } else {
-            this._warm.remove_style_class_name('active');
-            this._mono.add_style_class_name('active');
-        }
+        // GNOME's native checked button treatment gives the two modes a clear,
+        // mutually exclusive segmented-switch state and keyboard semantics.
+        this._warm.checked = warm;
+        this._mono.checked = !warm;
         this._left.text = warm ? _('No warming') : _('Normal colors');
         this._right.text = warm ? _('Maximum warmth') : _('Full black & white');
         this._subtitle = this._extension.effectiveEnabled ? _(warm ? 'Warm colors' : 'Black & white') : _('Off');
