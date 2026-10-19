@@ -3,6 +3,7 @@
     <key name="enabled" type="b"><default>false</default><summary>Enable the color effect</summary></key>
     <key name="mode" type="s"><default>'warm'</default><choices><choice value="warm"/><choice value="monochrome"/></choices><summary>Active color mode</summary></key>
     <key name="warm-intensity" type="i"><default>40</default><range min="0" max="100"/><summary>Warmth intensity</summary></key>
+    <key name="warm-temperature" type="i"><default>4200</default><range min="2700" max="6500"/><summary>Warm color temperature in kelvin</summary></key>
     <key name="monochrome-intensity" type="i"><default>100</default><range min="0" max="100"/><summary>Monochrome intensity</summary></key>
     <key name="contrast-intensity" type="i"><default>0</default><range min="0" max="100"/><summary>Contrast reduction</summary></key>
     <key name="schedule-enabled" type="b"><default>false</default><summary>Enable a daily schedule</summary></key>

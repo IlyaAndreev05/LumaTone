@@ -3,27 +3,41 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
-import Cogl from 'gi://Cogl';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {QuickMenuToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
+import {temperatureFactors, temperatureToSliderValue, sliderValueToTemperature} from './color-model.js';
 import {contrastAdjustmentFromIntensity, resolveScheduledState, scheduleAt} from './schedule.js';
 
 const NIGHT_LIGHT_SCHEMA = 'org.gnome.settings-daemon.plugins.color';
+const WARM_FILTER_SHADER = `
+uniform float red_factor;
+uniform float green_factor;
+uniform float blue_factor;
+
+void main() {
+    cogl_color_out.r *= red_factor;
+    cogl_color_out.g *= green_factor;
+    cogl_color_out.b *= blue_factor;
+}
+`;
+
 class ColorEffects {
     constructor() {
-        this._actors = [];
         this._desaturateEffects = [];
+        this._warmEffects = [];
         this._contrastEffects = [];
         this._unredirectDisabled = false;
     }
 
-    apply(mode, intensity, contrastIntensity = 0) {
+    apply(mode, intensity, temperature = 6500, contrastIntensity = 0) {
         intensity = Math.clamp(intensity, 0, 100);
         contrastIntensity = Math.clamp(contrastIntensity, 0, 100);
-        if (intensity === 0 && contrastIntensity === 0) {
+        const colorActive = intensity > 0 &&
+            (mode === 'monochrome' || (mode === 'warm' && temperature < 6500));
+        if (!colorActive && contrastIntensity === 0) {
             this.clear();
             return;
         }
@@ -33,7 +47,7 @@ class ColorEffects {
             this._unredirectDisabled = true;
         }
 
-        if (intensity === 0) {
+        if (!colorActive) {
             this._removeColorEffects();
             this._mode = null;
         } else {
@@ -41,10 +55,12 @@ class ColorEffects {
                 this._removeColorEffects();
                 this._mode = mode;
             }
-            if (mode === 'monochrome')
+            if (mode === 'monochrome') {
                 this._applyMonochrome(intensity);
-            else
-                this._applyWarmth(intensity);
+            } else if (!this._applyWarmth(temperature, intensity) && contrastIntensity === 0) {
+                this.clear();
+                return;
+            }
         }
 
         if (contrastIntensity > 0)
@@ -74,28 +90,39 @@ class ColorEffects {
             effect.set_factor(intensity / 100);
     }
 
-    _applyWarmth(intensity) {
-        const monitors = Main.layoutManager.monitors;
-        while (this._actors.length > monitors.length)
-            this._actors.pop().destroy();
-        for (let i = 0; i < monitors.length; i++) {
-            const monitor = monitors[i];
-            let actor = this._actors[i];
-            if (!actor) {
-                actor = new Clutter.Actor({
-                    reactive: false,
-                    name: 'lumatone-warm-screen-layer',
-                });
-                Main.uiGroup.add_child(actor);
-                this._actors.push(actor);
+    _applyWarmth(temperature, intensity) {
+        if (this._warmEffects.length === 0) {
+            const effects = [];
+            try {
+                for (const group of [global.window_group, Main.uiGroup].filter(Boolean)) {
+                    const effect = new Clutter.ShaderEffect({shader_type: 1});
+                    if (!effect.set_shader_source(WARM_FILTER_SHADER))
+                        throw new Error('Could not compile the warm color-temperature shader');
+                    group.add_effect_with_name('lumatone-color-temperature', effect);
+                    effects.push({group, effect});
+                }
+                this._warmEffects = effects;
+            } catch (error) {
+                for (const {group, effect} of effects) {
+                    try {
+                        group.remove_effect(effect);
+                    } catch (removeError) {
+                        // The shell may have already torn down this actor.
+                    }
+                }
+                logError(error, 'LumaTone could not apply the warm color-temperature effect');
+                return false;
             }
-            actor.set_background_color(new Cogl.Color({
-                red: 255, green: 167, blue: 78,
-                alpha: Math.round(255 * 0.48 * intensity / 100),
-            }));
-            actor.set_position(monitor.x, monitor.y);
-            actor.set_size(monitor.width, monitor.height);
         }
+
+        const factors = temperatureFactors(temperature, intensity);
+        for (const {effect} of this._warmEffects) {
+            effect.set_uniform_value('red_factor', factors.red);
+            effect.set_uniform_value('green_factor', factors.green);
+            effect.set_uniform_value('blue_factor', factors.blue);
+            effect.queue_repaint();
+        }
+        return true;
     }
 
     _applyContrast(intensity) {
@@ -120,9 +147,14 @@ class ColorEffects {
             }
         }
         this._desaturateEffects = [];
-        for (const actor of this._actors)
-            actor.destroy();
-        this._actors = [];
+        for (const {group, effect} of this._warmEffects) {
+            try {
+                group.remove_effect(effect);
+            } catch (error) {
+                // GNOME can tear down the scene graph before an extension's disable hook runs.
+            }
+        }
+        this._warmEffects = [];
     }
 
     _removeContrastEffects() {
@@ -198,8 +230,32 @@ class NightToneToggle extends QuickMenuToggle {
         modeRow.add_child(this._warm);
         modeRow.add_child(this._mono);
         this._content.add_child(modeRow);
+
+        this._temperatureGroup = new St.BoxLayout({
+            vertical: true,
+            style: 'spacing: 6px;',
+        });
+        const temperatureHeading = new St.BoxLayout({x_expand: true});
+        temperatureHeading.add_child(new St.Label({text: _('Color temperature'), x_expand: true}));
+        this._temperatureValue = new St.Label({text: '4200 K'});
+        temperatureHeading.add_child(this._temperatureValue);
+        this._temperatureGroup.add_child(temperatureHeading);
+        this._temperatureSlider = new Slider(temperatureToSliderValue(4200));
+        this._temperatureSlider.accessible_name = _('Warm color temperature');
+        this._temperatureGroup.add_child(this._temperatureSlider);
+        const temperatureExtremes = new St.BoxLayout({x_expand: true});
+        temperatureExtremes.add_child(new St.Label({text: _('Neutral · 6500 K'), x_expand: true}));
+        temperatureExtremes.add_child(new St.Label({text: _('Warm · 2700 K')}));
+        this._temperatureGroup.add_child(temperatureExtremes);
+        this._content.add_child(this._temperatureGroup);
+        this._temperatureSlider.connect('notify::value', () => {
+            if (!this._syncing)
+                this._extension.setTemperature(sliderValueToTemperature(this._temperatureSlider.value));
+        });
+
         const heading = new St.BoxLayout({x_expand: true});
-        heading.add_child(new St.Label({text: _('Intensity'), x_expand: true}));
+        this._intensityHeading = new St.Label({text: _('Intensity'), x_expand: true});
+        heading.add_child(this._intensityHeading);
         this._percentage = new St.Label({text: '40%'});
         heading.add_child(this._percentage);
         this._content.add_child(heading);
@@ -211,8 +267,8 @@ class NightToneToggle extends QuickMenuToggle {
                 this._extension.setIntensity(Math.round(this._slider.value * 100));
         });
         const extremes = new St.BoxLayout({x_expand: true});
-        this._left = new St.Label({text: _('No warming'), x_expand: true});
-        this._right = new St.Label({text: _('Maximum warmth')});
+        this._left = new St.Label({text: _('No effect'), x_expand: true});
+        this._right = new St.Label({text: _('Full strength')});
         extremes.add_child(this._left);
         extremes.add_child(this._right);
         this._content.add_child(extremes);
@@ -248,19 +304,25 @@ class NightToneToggle extends QuickMenuToggle {
         const mode = settings.get_string('mode');
         const warm = mode === 'warm';
         const value = settings.get_int(warm ? 'warm-intensity' : 'monochrome-intensity');
+        const temperature = settings.get_int('warm-temperature');
         const contrast = settings.get_int('contrast-intensity');
         this._syncing = true;
         this._slider.value = value / 100;
+        this._temperatureSlider.value = temperatureToSliderValue(temperature);
         this._contrastSlider.value = contrast / 100;
         this._syncing = false;
+        this._temperatureGroup.visible = warm;
+        this._temperatureValue.text = `${temperature} K`;
+        this._intensityHeading.text = warm ? _('Strength') : _('Intensity');
+        this._slider.accessible_name = warm ? _('Warm effect strength') : _('Monochrome intensity');
         this._percentage.text = `${value}%`;
         this._contrastPercentage.text = `${contrast}%`;
         // GNOME's native checked button treatment gives the two modes a clear,
         // mutually exclusive segmented-switch state and keyboard semantics.
         this._warm.checked = warm;
         this._mono.checked = !warm;
-        this._left.text = warm ? _('No warming') : _('Normal colors');
-        this._right.text = warm ? _('Maximum warmth') : _('Full black & white');
+        this._left.text = warm ? _('No effect') : _('Normal colors');
+        this._right.text = warm ? _('Full strength') : _('Full black & white');
         this._subtitle = this._extension.effectiveEnabled ? _(warm ? 'Warm colors' : 'Black & white') : _('Off');
     }
 });
@@ -291,6 +353,7 @@ export default class LumaToneExtension extends Extension {
             Main.sessionMode.connectObject('updated', () => this._updateSchedule(), this);
             this.settings.connectObject('changed::mode', () => this._apply(), this);
             this.settings.connectObject('changed::warm-intensity', () => this._apply(), this);
+            this.settings.connectObject('changed::warm-temperature', () => this._apply(), this);
             this.settings.connectObject('changed::monochrome-intensity', () => this._apply(), this);
             this.settings.connectObject('changed::contrast-intensity', () => this._apply(), this);
             this.settings.connectObject('changed::enabled', () => this._apply(), this);
@@ -411,6 +474,11 @@ export default class LumaToneExtension extends Extension {
         this._indicator?.toggle._syncMenu();
     }
 
+    setTemperature(value) {
+        this.settings.set_int('warm-temperature', Math.clamp(value, 2700, 6500));
+        this._indicator?.toggle._syncMenu();
+    }
+
     setContrast(value) {
         this.settings.set_int('contrast-intensity', Math.clamp(value, 0, 100));
         this._indicator?.toggle._syncMenu();
@@ -421,8 +489,9 @@ export default class LumaToneExtension extends Extension {
             return;
         const mode = this.settings.get_string('mode');
         const intensity = this.settings.get_int(mode === 'warm' ? 'warm-intensity' : 'monochrome-intensity');
+        const temperature = this.settings.get_int('warm-temperature');
         const contrast = this.settings.get_int('contrast-intensity');
-        this.effects.apply(mode, this.effectiveEnabled ? intensity : 0,
+        this.effects.apply(mode, this.effectiveEnabled ? intensity : 0, temperature,
             this.effectiveEnabled ? contrast : 0);
     }
 
