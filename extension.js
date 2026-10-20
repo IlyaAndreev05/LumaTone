@@ -1,6 +1,8 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Shell from 'gi://Shell';
+import Cogl from 'gi://Cogl';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -10,168 +12,86 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
 import {temperatureFactors, temperatureToSliderValue, sliderValueToTemperature} from './color-model.js';
 import {contrastAdjustmentFromIntensity, resolveScheduledState, scheduleAt} from './schedule.js';
+import {ColorEffects} from './color-effects.js';
 
 const NIGHT_LIGHT_SCHEMA = 'org.gnome.settings-daemon.plugins.color';
-const WARM_FILTER_SHADER = `
-uniform float red_factor;
-uniform float green_factor;
-uniform float blue_factor;
-
-void main() {
-    cogl_color_out.r *= red_factor;
-    cogl_color_out.g *= green_factor;
-    cogl_color_out.b *= blue_factor;
-}
-`;
-
-class ColorEffects {
-    constructor() {
-        this._desaturateEffects = [];
-        this._warmEffects = [];
-        this._contrastEffects = [];
-        this._unredirectDisabled = false;
+const WarmColorTemperatureEffect = GObject.registerClass(
+class WarmColorTemperatureEffect extends Shell.GLSLEffect {
+    vfunc_build_pipeline() {
+        this.add_glsl_snippet(Cogl.SnippetHook.FRAGMENT, `
+            uniform float red_factor;
+            uniform float green_factor;
+            uniform float blue_factor;
+        `, `
+            cogl_color_out.r *= red_factor;
+            cogl_color_out.g *= green_factor;
+            cogl_color_out.b *= blue_factor;
+        `, false);
     }
 
-    apply(mode, intensity, temperature = 6500, contrastIntensity = 0) {
-        intensity = Math.clamp(intensity, 0, 100);
-        contrastIntensity = Math.clamp(contrastIntensity, 0, 100);
-        const colorActive = intensity > 0 &&
-            (mode === 'monochrome' || (mode === 'warm' && temperature < 6500));
-        if (!colorActive && contrastIntensity === 0) {
-            this.clear();
-            return;
-        }
+    _init() {
+        super._init();
+        this._uniforms = ['red_factor', 'green_factor', 'blue_factor']
+            .map(name => this.get_uniform_location(name));
+        if (this._uniforms.some(location => location < 0))
+            throw new Error('Could not find the warm color shader uniforms');
+    }
 
-        if (!this._unredirectDisabled) {
+    setFactors(factors) {
+        for (const [index, channel] of ['red', 'green', 'blue'].entries())
+            this.set_uniform_float(this._uniforms[index], 1, 1, [factors[channel]]);
+        this.queue_repaint();
+    }
+});
+
+function createColorEffects(extension) {
+    return new ColorEffects({
+        createEffect(kind) {
+            if (kind === 'warm')
+                return new WarmColorTemperatureEffect();
+            if (kind === 'monochrome')
+                return new Clutter.DesaturateEffect();
+            return new Clutter.BrightnessContrastEffect();
+        },
+        addEffect(kind, effect) {
+            const names = {
+                warm: 'lumatone-color-temperature',
+                monochrome: 'lumatone-desaturate',
+                contrast: 'lumatone-contrast',
+            };
+            Main.uiGroup.add_effect_with_name(names[kind], effect);
+        },
+        configureEffect(kind, effect, values) {
+            if (kind === 'warm') {
+                effect.setFactors(temperatureFactors(values.temperature, values.intensity));
+            } else if (kind === 'monochrome') {
+                effect.set_factor(values.intensity / 100);
+            } else {
+                effect.set_contrast(contrastAdjustmentFromIntensity(values.intensity));
+            }
+        },
+        removeEffect(_kind, effect) {
+            Main.uiGroup.remove_effect(effect);
+        },
+        disableUnredirect() {
             global.compositor.disable_unredirect();
-            this._unredirectDisabled = true;
-        }
-
-        if (!colorActive) {
-            this._removeColorEffects();
-            this._mode = null;
-        } else {
-            if (this._mode !== mode) {
-                this._removeColorEffects();
-                this._mode = mode;
-            }
-            if (mode === 'monochrome') {
-                this._applyMonochrome(intensity);
-            } else if (!this._applyWarmth(temperature, intensity) && contrastIntensity === 0) {
-                this.clear();
-                return;
-            }
-        }
-
-        if (contrastIntensity > 0)
-            this._applyContrast(contrastIntensity);
-        else
-            this._removeContrastEffects();
-    }
-
-    clear() {
-        this._removeEffects();
-        this._mode = null;
-        if (this._unredirectDisabled) {
+        },
+        enableUnredirect() {
             global.compositor.enable_unredirect();
-            this._unredirectDisabled = false;
-        }
-    }
-
-    _applyMonochrome(intensity) {
-        if (this._desaturateEffects.length === 0) {
-            for (const group of [global.window_group, Main.uiGroup].filter(Boolean)) {
-                const effect = new Clutter.DesaturateEffect();
-                group.add_effect_with_name('lumatone-desaturate', effect);
-                this._desaturateEffects.push({group, effect});
-            }
-        }
-        for (const {effect} of this._desaturateEffects)
-            effect.set_factor(intensity / 100);
-    }
-
-    _applyWarmth(temperature, intensity) {
-        if (this._warmEffects.length === 0) {
-            const effects = [];
-            try {
-                for (const group of [global.window_group, Main.uiGroup].filter(Boolean)) {
-                    const effect = new Clutter.ShaderEffect({shader_type: 1});
-                    if (!effect.set_shader_source(WARM_FILTER_SHADER))
-                        throw new Error('Could not compile the warm color-temperature shader');
-                    group.add_effect_with_name('lumatone-color-temperature', effect);
-                    effects.push({group, effect});
-                }
-                this._warmEffects = effects;
-            } catch (error) {
-                for (const {group, effect} of effects) {
-                    try {
-                        group.remove_effect(effect);
-                    } catch (removeError) {
-                        // The shell may have already torn down this actor.
-                    }
-                }
-                logError(error, 'LumaTone could not apply the warm color-temperature effect');
-                return false;
-            }
-        }
-
-        const factors = temperatureFactors(temperature, intensity);
-        for (const {effect} of this._warmEffects) {
-            effect.set_uniform_value('red_factor', factors.red);
-            effect.set_uniform_value('green_factor', factors.green);
-            effect.set_uniform_value('blue_factor', factors.blue);
-            effect.queue_repaint();
-        }
-        return true;
-    }
-
-    _applyContrast(intensity) {
-        if (this._contrastEffects.length === 0) {
-            for (const group of [global.window_group, Main.uiGroup].filter(Boolean)) {
-                const effect = new Clutter.BrightnessContrastEffect();
-                group.add_effect_with_name('lumatone-contrast', effect);
-                this._contrastEffects.push({group, effect});
-            }
-        }
-        const contrast = contrastAdjustmentFromIntensity(intensity);
-        for (const {effect} of this._contrastEffects)
-            effect.set_contrast(contrast);
-    }
-
-    _removeColorEffects() {
-        for (const {group, effect} of this._desaturateEffects) {
-            try {
-                group.remove_effect(effect);
-            } catch (error) {
-                // GNOME can tear down the scene graph before an extension's disable hook runs.
-            }
-        }
-        this._desaturateEffects = [];
-        for (const {group, effect} of this._warmEffects) {
-            try {
-                group.remove_effect(effect);
-            } catch (error) {
-                // GNOME can tear down the scene graph before an extension's disable hook runs.
-            }
-        }
-        this._warmEffects = [];
-    }
-
-    _removeContrastEffects() {
-        for (const {group, effect} of this._contrastEffects) {
-            try {
-                group.remove_effect(effect);
-            } catch (error) {
-                // The stage can be torn down before an extension's disable hook runs.
-            }
-        }
-        this._contrastEffects = [];
-    }
-
-    _removeEffects() {
-        this._removeColorEffects();
-        this._removeContrastEffects();
-    }
+        },
+        onError(error) {
+            logError(error, 'LumaTone failed to apply the color effect');
+            Main.notify(_('Night mode was turned off'),
+                _('The color effect could not be applied. Check the GNOME Shell log for details.'));
+            extension._effectFailed = true;
+            extension.effectiveEnabled = false;
+            extension.settings?.set_boolean('enabled', false);
+            extension._indicator?.toggle._syncMenu();
+        },
+        onCleanupError(error) {
+            logError(error, 'LumaTone could not remove a color effect');
+        },
+    });
 }
 
 const NightToneToggle = GObject.registerClass(
@@ -341,7 +261,8 @@ export default class LumaToneExtension extends Extension {
         this.settings = this.getSettings();
         this._nightLight = new Gio.Settings({schema_id: NIGHT_LIGHT_SCHEMA});
         this._nightLightSnapshot = {};
-        this.effects = new ColorEffects();
+            this._effectFailed = false;
+        this.effects = createColorEffects(this);
         try {
             this._restoreStaleNightLightSnapshot();
 
@@ -441,13 +362,15 @@ export default class LumaToneExtension extends Extension {
                 this.settings.set_boolean('enabled', false);
             }
         }
-        this.effectiveEnabled = enabled;
+        this.effectiveEnabled = enabled && !this._effectFailed;
         this._apply();
         this._indicator?.toggle._syncMenu();
         this._scheduleNextCheck(schedule);
     }
 
     setEnabled(enabled, manual = false) {
+        if (enabled)
+            this._effectFailed = false;
         if (manual && this.settings.get_boolean('schedule-enabled')) {
             const schedule = scheduleAt(new Date(), this.settings.get_string('schedule-start'), this.settings.get_string('schedule-end'));
             this.settings.set_boolean('override-active', schedule.valid);
@@ -487,6 +410,12 @@ export default class LumaToneExtension extends Extension {
     _apply() {
         if (!this.effects || !this.settings)
             return;
+        if (this._effectFailed) {
+            this.effectiveEnabled = false;
+            this.effects.clear();
+            this._indicator?.toggle._syncMenu();
+            return;
+        }
         const mode = this.settings.get_string('mode');
         const intensity = this.settings.get_int(mode === 'warm' ? 'warm-intensity' : 'monochrome-intensity');
         const temperature = this.settings.get_int('warm-temperature');
