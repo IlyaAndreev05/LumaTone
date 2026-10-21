@@ -7,7 +7,7 @@ ZIP := $(CURDIR)/dist/$(UUID).shell-extension.zip
 check: syntax test schemas pack
 
 syntax:
-	@set -eu; for file in extension.js prefs.js schedule.js color-model.js color-effects.js tests/schedule.test.js tests/color-model.test.js tests/color-effects.test.js; do node --check --input-type=module < "$$file"; done
+	@set -eu; for file in extension.js prefs.js schedule.js color-model.js color-effects.js tests/schedule.test.js tests/color-model.test.js tests/color-effects.test.js tests/settings-persistence.test.js; do node --check --input-type=module < "$$file"; done
 
 test:
 	node --test tests/*.test.js
