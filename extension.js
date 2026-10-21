@@ -12,6 +12,8 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
 import {
     limitPercent,
+    limitModeIntensity,
+    maximumIntensityForMode,
     percentToSliderPosition,
     sliderPositionToPercent,
     temperatureFactors,
@@ -172,7 +174,7 @@ class NightToneToggle extends QuickMenuToggle {
         this._temperatureGroup.add_child(this._temperatureSlider);
         const temperatureExtremes = new St.BoxLayout({x_expand: true});
         temperatureExtremes.add_child(new St.Label({text: _('Neutral · 6500 K'), x_expand: true}));
-        temperatureExtremes.add_child(new St.Label({text: _('Warm · 2700 K')}));
+        temperatureExtremes.add_child(new St.Label({text: _('Warm · 1000 K')}));
         this._temperatureGroup.add_child(temperatureExtremes);
         this._content.add_child(this._temperatureGroup);
         this._temperatureSlider.connect('notify::value', () => {
@@ -190,9 +192,12 @@ class NightToneToggle extends QuickMenuToggle {
         this._slider.accessible_name = _('Color effect intensity');
         this._content.add_child(this._slider);
         this._slider.connect('notify::value', () => {
-            if (!this._syncing)
+            if (!this._syncing) {
+                const maximum = maximumIntensityForMode(this._extension.settings.get_string('mode'),
+                    this._extension.settings.get_int('max-effect-strength'));
                 this._extension.setIntensity(sliderPositionToPercent(this._slider.value,
-                    this._extension.settings.get_int('max-effect-strength')));
+                    maximum));
+            }
         });
         const extremes = new St.BoxLayout({x_expand: true});
         this._left = new St.Label({text: _('No effect'), x_expand: true});
@@ -227,7 +232,7 @@ class NightToneToggle extends QuickMenuToggle {
         const mode = settings.get_string('mode');
         const warm = mode === 'warm';
         const value = settings.get_int(warm ? 'warm-intensity' : 'monochrome-intensity');
-        const maxStrength = settings.get_int('max-effect-strength');
+        const maxStrength = maximumIntensityForMode(mode, settings.get_int('max-effect-strength'));
         const temperature = settings.get_int('warm-temperature');
         const contrast = settings.get_int('contrast-intensity');
         const maxContrast = settings.get_int('max-contrast-intensity');
@@ -405,13 +410,14 @@ export default class LumaToneExtension extends Extension {
     }
 
     setIntensity(value) {
-        const key = this.settings.get_string('mode') === 'warm' ? 'warm-intensity' : 'monochrome-intensity';
-        this.settings.set_int(key, limitPercent(value, this.settings.get_int('max-effect-strength')));
+        const mode = this.settings.get_string('mode');
+        const key = mode === 'warm' ? 'warm-intensity' : 'monochrome-intensity';
+        this.settings.set_int(key, limitModeIntensity(mode, value, this.settings.get_int('max-effect-strength')));
         this._indicator?.toggle._syncMenu();
     }
 
     setTemperature(value) {
-        this.settings.set_int('warm-temperature', Math.clamp(value, 2700, 6500));
+        this.settings.set_int('warm-temperature', Math.clamp(value, 1000, 6500));
         this._indicator?.toggle._syncMenu();
     }
 
@@ -431,9 +437,8 @@ export default class LumaToneExtension extends Extension {
             return;
         }
         const mode = this.settings.get_string('mode');
-        const intensity = limitPercent(
-            this.settings.get_int(mode === 'warm' ? 'warm-intensity' : 'monochrome-intensity'),
-            this.settings.get_int('max-effect-strength'));
+        const requestedIntensity = this.settings.get_int(mode === 'warm' ? 'warm-intensity' : 'monochrome-intensity');
+        const intensity = limitModeIntensity(mode, requestedIntensity, this.settings.get_int('max-effect-strength'));
         const temperature = this.settings.get_int('warm-temperature');
         const contrast = limitPercent(this.settings.get_int('contrast-intensity'),
             this.settings.get_int('max-contrast-intensity'));

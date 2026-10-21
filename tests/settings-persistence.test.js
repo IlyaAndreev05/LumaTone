@@ -30,8 +30,8 @@ test('GSettings persists effect limits and separate mode strengths between proce
     const get = key => execFileSync('gsettings', ['get', schemaId, key], {env, encoding: 'utf8'}).trim();
     const set = (key, value) => execFileSync('gsettings', ['set', schemaId, key, String(value)], {env});
 
-    assert.equal(get('max-effect-strength'), '75');
-    assert.equal(get('max-contrast-intensity'), '75');
+    assert.equal(get('max-effect-strength'), '85');
+    assert.equal(get('max-contrast-intensity'), '85');
 
     set('max-effect-strength', 61);
     set('max-contrast-intensity', 69);

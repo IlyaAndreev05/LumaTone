@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {limitPercent, MAX_COLOR_TEMPERATURE, MIN_COLOR_TEMPERATURE, percentToSliderPosition,
+import {limitModeIntensity, limitPercent, maximumIntensityForMode, MAX_COLOR_TEMPERATURE, MIN_COLOR_TEMPERATURE, percentToSliderPosition,
     sliderPositionToPercent, sliderValueToTemperature, temperatureFactors,
     temperatureToSliderValue} from '../color-model.js';
 
@@ -30,7 +30,15 @@ test('warmer temperatures reduce green and blue, while strength blends back to n
     assert.ok(lessWarmTemperature.blue > fullWarmth.blue);
 });
 
-test('limits effect percentages and maps a configured maximum to the slider endpoint', () => {
+test('supports deep warm temperatures down to 1000 K', () => {
+    assert.equal(MIN_COLOR_TEMPERATURE, 1000);
+    assert.equal(sliderValueToTemperature(1), 1000);
+    assert.equal(temperatureToSliderValue(1000), 1);
+    assert.equal(sliderValueToTemperature(temperatureToSliderValue(1000)), 1000);
+    assert.ok(temperatureFactors(1000, 85).blue < temperatureFactors(2700, 85).blue);
+});
+
+test('maps a configured percentage cap to its slider endpoint', () => {
     assert.equal(limitPercent(100, 75), 75);
     assert.equal(limitPercent(42, 75), 42);
     assert.equal(limitPercent(42, 0), 0);
@@ -40,4 +48,14 @@ test('limits effect percentages and maps a configured maximum to the slider endp
     assert.equal(sliderPositionToPercent(1, 75), 75);
     assert.equal(sliderPositionToPercent(0.5, 75), 38);
     assert.equal(sliderPositionToPercent(1, 0), 0);
+});
+
+test('allows monochrome intensity to reach 100% independently of the warm cap', () => {
+    const warmMaximum = 85;
+    assert.equal(maximumIntensityForMode('warm', warmMaximum), 85);
+    assert.equal(limitModeIntensity('warm', 100, warmMaximum), 85);
+    assert.equal(percentToSliderPosition(85, maximumIntensityForMode('warm', warmMaximum)), 1);
+    assert.equal(maximumIntensityForMode('monochrome', warmMaximum), 100);
+    assert.equal(limitModeIntensity('monochrome', 100, warmMaximum), 100);
+    assert.equal(sliderPositionToPercent(1, 100), 100);
 });

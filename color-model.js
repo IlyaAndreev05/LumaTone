@@ -1,4 +1,4 @@
-export const MIN_COLOR_TEMPERATURE = 2700;
+export const MIN_COLOR_TEMPERATURE = 1000;
 export const MAX_COLOR_TEMPERATURE = 6500;
 
 function clamp(value, minimum, maximum) {
@@ -38,6 +38,14 @@ export function limitPercent(value, maximum) {
     const limit = clamp(Number.isFinite(maximum) ? Math.round(maximum) : 0, 0, 100);
     const percent = clamp(Number.isFinite(value) ? Math.round(value) : 0, 0, 100);
     return Math.min(percent, limit);
+}
+
+export function maximumIntensityForMode(mode, warmMaximum) {
+    return mode === 'warm' ? clamp(Number.isFinite(warmMaximum) ? Math.round(warmMaximum) : 0, 0, 100) : 100;
+}
+
+export function limitModeIntensity(mode, value, warmMaximum) {
+    return limitPercent(value, maximumIntensityForMode(mode, warmMaximum));
 }
 
 export function percentToSliderPosition(value, maximum) {

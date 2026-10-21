@@ -77,8 +77,8 @@ export default class LumaTonePreferences extends ExtensionPreferences {
             title: _('Effect limits'),
             description: _('Set the highest effect levels used by the quick settings sliders.'),
         });
-        addMaximumRow(limits, settings, 'max-effect-strength', _('Maximum effect strength (%)'),
-            _('Applies to the warm and black-and-white modes.'));
+        addMaximumRow(limits, settings, 'max-effect-strength', _('Maximum warm effect strength (%)'),
+            _('Limits the warm effect. Black-and-white intensity remains adjustable to 100%.'));
         addMaximumRow(limits, settings, 'max-contrast-intensity', _('Maximum contrast reduction (%)'),
             _('Applies to both color modes.'));
 
