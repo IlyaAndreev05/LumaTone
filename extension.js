@@ -10,9 +10,16 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {QuickMenuToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
-import {temperatureFactors, temperatureToSliderValue, sliderValueToTemperature} from './color-model.js';
+import {
+    limitPercent,
+    percentToSliderPosition,
+    sliderPositionToPercent,
+    temperatureFactors,
+    temperatureToSliderValue,
+    sliderValueToTemperature,
+} from './color-model.js';
 import {contrastAdjustmentFromIntensity, resolveScheduledState, scheduleAt} from './schedule.js';
-import {ColorEffects} from './color-effects.js';
+import {ColorEffects, setScalarUniform} from './color-effects.js';
 
 const NIGHT_LIGHT_SCHEMA = 'org.gnome.settings-daemon.plugins.color';
 const WarmColorTemperatureEffect = GObject.registerClass(
@@ -39,7 +46,7 @@ class WarmColorTemperatureEffect extends Shell.GLSLEffect {
 
     setFactors(factors) {
         for (const [index, channel] of ['red', 'green', 'blue'].entries())
-            this.set_uniform_float(this._uniforms[index], 1, 1, [factors[channel]]);
+            setScalarUniform(this, this._uniforms[index], factors[channel]);
         this.queue_repaint();
     }
 });
@@ -184,7 +191,8 @@ class NightToneToggle extends QuickMenuToggle {
         this._content.add_child(this._slider);
         this._slider.connect('notify::value', () => {
             if (!this._syncing)
-                this._extension.setIntensity(Math.round(this._slider.value * 100));
+                this._extension.setIntensity(sliderPositionToPercent(this._slider.value,
+                    this._extension.settings.get_int('max-effect-strength')));
         });
         const extremes = new St.BoxLayout({x_expand: true});
         this._left = new St.Label({text: _('No effect'), x_expand: true});
@@ -203,14 +211,9 @@ class NightToneToggle extends QuickMenuToggle {
         this._content.add_child(this._contrastSlider);
         this._contrastSlider.connect('notify::value', () => {
             if (!this._syncing)
-                this._extension.setContrast(Math.round(this._contrastSlider.value * 100));
+                this._extension.setContrast(sliderPositionToPercent(this._contrastSlider.value,
+                    this._extension.settings.get_int('max-contrast-intensity')));
         });
-        const contrastExtremes = new St.BoxLayout({x_expand: true});
-        this._contrastLeft = new St.Label({text: _('Normal contrast'), x_expand: true});
-        this._contrastRight = new St.Label({text: _('Lower contrast')});
-        contrastExtremes.add_child(this._contrastLeft);
-        contrastExtremes.add_child(this._contrastRight);
-        this._content.add_child(contrastExtremes);
         this._content.add_child(new PopupMenu.PopupSeparatorMenuItem());
         const actions = new St.BoxLayout({x_expand: true, style: 'spacing: 8px;'});
         const prefs = new St.Button({label: _('Settings'), style_class: 'button', x_expand: true, can_focus: true});
@@ -224,19 +227,27 @@ class NightToneToggle extends QuickMenuToggle {
         const mode = settings.get_string('mode');
         const warm = mode === 'warm';
         const value = settings.get_int(warm ? 'warm-intensity' : 'monochrome-intensity');
+        const maxStrength = settings.get_int('max-effect-strength');
         const temperature = settings.get_int('warm-temperature');
         const contrast = settings.get_int('contrast-intensity');
+        const maxContrast = settings.get_int('max-contrast-intensity');
+        const visibleStrength = limitPercent(value, maxStrength);
+        const visibleContrast = limitPercent(contrast, maxContrast);
         this._syncing = true;
-        this._slider.value = value / 100;
+        this._slider.value = percentToSliderPosition(value, maxStrength);
         this._temperatureSlider.value = temperatureToSliderValue(temperature);
-        this._contrastSlider.value = contrast / 100;
+        this._contrastSlider.value = percentToSliderPosition(contrast, maxContrast);
         this._syncing = false;
         this._temperatureGroup.visible = warm;
         this._temperatureValue.text = `${temperature} K`;
         this._intensityHeading.text = warm ? _('Strength') : _('Intensity');
         this._slider.accessible_name = warm ? _('Warm effect strength') : _('Monochrome intensity');
-        this._percentage.text = `${value}%`;
-        this._contrastPercentage.text = `${contrast}%`;
+        this._slider.reactive = maxStrength > 0;
+        this._slider.can_focus = maxStrength > 0;
+        this._percentage.text = `${visibleStrength}%`;
+        this._contrastSlider.reactive = maxContrast > 0;
+        this._contrastSlider.can_focus = maxContrast > 0;
+        this._contrastPercentage.text = `${visibleContrast}%`;
         // GNOME's native checked button treatment gives the two modes a clear,
         // mutually exclusive segmented-switch state and keyboard semantics.
         this._warm.checked = warm;
@@ -277,6 +288,8 @@ export default class LumaToneExtension extends Extension {
             this.settings.connectObject('changed::warm-temperature', () => this._apply(), this);
             this.settings.connectObject('changed::monochrome-intensity', () => this._apply(), this);
             this.settings.connectObject('changed::contrast-intensity', () => this._apply(), this);
+            this.settings.connectObject('changed::max-effect-strength', () => this._apply(), this);
+            this.settings.connectObject('changed::max-contrast-intensity', () => this._apply(), this);
             this.settings.connectObject('changed::enabled', () => this._apply(), this);
             this.settings.connectObject('changed::schedule-enabled', () => this._updateSchedule(), this);
             this.settings.connectObject('changed::schedule-start', () => this._updateSchedule(), this);
@@ -393,7 +406,7 @@ export default class LumaToneExtension extends Extension {
 
     setIntensity(value) {
         const key = this.settings.get_string('mode') === 'warm' ? 'warm-intensity' : 'monochrome-intensity';
-        this.settings.set_int(key, Math.clamp(value, 0, 100));
+        this.settings.set_int(key, limitPercent(value, this.settings.get_int('max-effect-strength')));
         this._indicator?.toggle._syncMenu();
     }
 
@@ -403,7 +416,8 @@ export default class LumaToneExtension extends Extension {
     }
 
     setContrast(value) {
-        this.settings.set_int('contrast-intensity', Math.clamp(value, 0, 100));
+        this.settings.set_int('contrast-intensity', limitPercent(value,
+            this.settings.get_int('max-contrast-intensity')));
         this._indicator?.toggle._syncMenu();
     }
 
@@ -417,9 +431,12 @@ export default class LumaToneExtension extends Extension {
             return;
         }
         const mode = this.settings.get_string('mode');
-        const intensity = this.settings.get_int(mode === 'warm' ? 'warm-intensity' : 'monochrome-intensity');
+        const intensity = limitPercent(
+            this.settings.get_int(mode === 'warm' ? 'warm-intensity' : 'monochrome-intensity'),
+            this.settings.get_int('max-effect-strength'));
         const temperature = this.settings.get_int('warm-temperature');
-        const contrast = this.settings.get_int('contrast-intensity');
+        const contrast = limitPercent(this.settings.get_int('contrast-intensity'),
+            this.settings.get_int('max-contrast-intensity'));
         this.effects.apply(mode, this.effectiveEnabled ? intensity : 0, temperature,
             this.effectiveEnabled ? contrast : 0);
     }

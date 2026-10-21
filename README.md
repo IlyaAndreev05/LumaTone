@@ -2,6 +2,8 @@
 
 LumaTone adds warm and black-and-white color modes, plus a contrast-reduction slider, to GNOME Shell 50 Quick Settings. Warm mode has separate color-temperature (2700–6500 K) and strength controls; black-and-white keeps its saturation and contrast controls. The effects are applied by the compositor across active monitors and full-screen windows. A daily local-time schedule can enable them automatically.
 
+The preferences window includes configurable maximum values for effect strength and contrast reduction. Both limits default to 75%; the strength limit applies to both color modes, while each mode retains its own selected intensity.
+
 ## Install
 
 Build and install from this directory:

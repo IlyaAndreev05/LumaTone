@@ -34,6 +34,23 @@ export function sliderValueToTemperature(value) {
         (MAX_COLOR_TEMPERATURE - MIN_COLOR_TEMPERATURE));
 }
 
+export function limitPercent(value, maximum) {
+    const limit = clamp(Number.isFinite(maximum) ? Math.round(maximum) : 0, 0, 100);
+    const percent = clamp(Number.isFinite(value) ? Math.round(value) : 0, 0, 100);
+    return Math.min(percent, limit);
+}
+
+export function percentToSliderPosition(value, maximum) {
+    const limit = clamp(Number.isFinite(maximum) ? Math.round(maximum) : 0, 0, 100);
+    return limit === 0 ? 0 : limitPercent(value, limit) / limit;
+}
+
+export function sliderPositionToPercent(value, maximum) {
+    const limit = clamp(Number.isFinite(maximum) ? Math.round(maximum) : 0, 0, 100);
+    const position = clamp(Number.isFinite(value) ? value : 0, 0, 1);
+    return Math.round(position * limit);
+}
+
 export function temperatureFactors(kelvin, intensity = 100) {
     const [red, green, blue] = rgbAtTemperature(kelvin);
     const [neutralRed, neutralGreen, neutralBlue] = rgbAtTemperature(MAX_COLOR_TEMPERATURE);

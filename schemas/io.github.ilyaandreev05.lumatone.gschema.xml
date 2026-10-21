@@ -6,6 +6,8 @@
     <key name="warm-temperature" type="i"><default>4200</default><range min="2700" max="6500"/><summary>Warm color temperature in kelvin</summary></key>
     <key name="monochrome-intensity" type="i"><default>100</default><range min="0" max="100"/><summary>Monochrome intensity</summary></key>
     <key name="contrast-intensity" type="i"><default>0</default><range min="0" max="100"/><summary>Contrast reduction</summary></key>
+    <key name="max-effect-strength" type="i"><default>75</default><range min="0" max="100"/><summary>Maximum strength for warm and monochrome effects</summary></key>
+    <key name="max-contrast-intensity" type="i"><default>75</default><range min="0" max="100"/><summary>Maximum contrast reduction</summary></key>
     <key name="schedule-enabled" type="b"><default>false</default><summary>Enable a daily schedule</summary></key>
     <key name="schedule-start" type="s"><default>'20:00'</default><summary>Daily effect start time</summary></key>
     <key name="schedule-end" type="s"><default>'07:00'</default><summary>Daily effect end time</summary></key>

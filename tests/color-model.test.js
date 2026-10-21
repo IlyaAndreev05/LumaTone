@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {MAX_COLOR_TEMPERATURE, MIN_COLOR_TEMPERATURE, sliderValueToTemperature,
-    temperatureFactors, temperatureToSliderValue} from '../color-model.js';
+import {limitPercent, MAX_COLOR_TEMPERATURE, MIN_COLOR_TEMPERATURE, percentToSliderPosition,
+    sliderPositionToPercent, sliderValueToTemperature, temperatureFactors,
+    temperatureToSliderValue} from '../color-model.js';
 
 test('maps the temperature slider from neutral on the left to warm on the right', () => {
     assert.equal(temperatureToSliderValue(MAX_COLOR_TEMPERATURE), 0);
@@ -27,4 +28,16 @@ test('warmer temperatures reduce green and blue, while strength blends back to n
     assert.ok(mediumWarmth.green > fullWarmth.green);
     assert.ok(mediumWarmth.blue > fullWarmth.blue);
     assert.ok(lessWarmTemperature.blue > fullWarmth.blue);
+});
+
+test('limits effect percentages and maps a configured maximum to the slider endpoint', () => {
+    assert.equal(limitPercent(100, 75), 75);
+    assert.equal(limitPercent(42, 75), 42);
+    assert.equal(limitPercent(42, 0), 0);
+    assert.equal(percentToSliderPosition(100, 75), 1);
+    assert.equal(percentToSliderPosition(20, 75), 20 / 75);
+    assert.equal(percentToSliderPosition(100, 0), 0);
+    assert.equal(sliderPositionToPercent(1, 75), 75);
+    assert.equal(sliderPositionToPercent(0.5, 75), 38);
+    assert.equal(sliderPositionToPercent(1, 0), 0);
 });

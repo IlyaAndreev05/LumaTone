@@ -2,6 +2,11 @@ function clamp(value, minimum, maximum) {
     return Math.min(maximum, Math.max(minimum, value));
 }
 
+/** Write one float uniform using Shell.GLSLEffect's (location, count, values) API. */
+export function setScalarUniform(effect, location, value) {
+    effect.set_uniform_float(location, 1, [value]);
+}
+
 /** Own the lifecycle of compositor effects through a small injectable adapter. */
 export class ColorEffects {
     constructor(adapter) {

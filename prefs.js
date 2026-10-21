@@ -3,6 +3,24 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+function addMaximumRow(group, settings, key, title, subtitle) {
+    const row = new Adw.SpinRow({
+        title,
+        subtitle,
+        adjustment: new Gtk.Adjustment({
+            lower: 0,
+            upper: 100,
+            step_increment: 1,
+            page_increment: 5,
+            value: settings.get_int(key),
+        }),
+        digits: 0,
+        numeric: true,
+    });
+    settings.bind(key, row, 'value', Gio.SettingsBindFlags.DEFAULT);
+    group.add(row);
+}
+
 export default class LumaTonePreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
@@ -55,11 +73,21 @@ export default class LumaTonePreferences extends ExtensionPreferences {
         schedule.add(validation);
         updateTimes();
 
+        const limits = new Adw.PreferencesGroup({
+            title: _('Effect limits'),
+            description: _('Set the highest effect levels used by the quick settings sliders.'),
+        });
+        addMaximumRow(limits, settings, 'max-effect-strength', _('Maximum effect strength (%)'),
+            _('Applies to the warm and black-and-white modes.'));
+        addMaximumRow(limits, settings, 'max-contrast-intensity', _('Maximum contrast reduction (%)'),
+            _('Applies to both color modes.'));
+
         const behavior = new Adw.PreferencesGroup({title: _('Behavior')});
         const priority = new Adw.ActionRow({title: _('Night Light GNOME'), subtitle: _('LumaTone pauses the built-in effect while this extension is enabled and restores its previous setting when disabled.')});
         behavior.add(priority);
 
         page.add(schedule);
+        page.add(limits);
         page.add(behavior);
         window.add(page);
     }
